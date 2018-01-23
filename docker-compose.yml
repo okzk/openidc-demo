@@ -1,0 +1,14 @@
+idp:
+  build: idp
+  ports:
+    - "3000:3000"
+  environment:
+    FQDN:
+rp:
+  build: rp
+  ports:
+    - "80:80"
+  links:
+    - idp:${FQDN}
+  environment:
+    FQDN:
