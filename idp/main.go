@@ -37,6 +37,8 @@ type Claim struct {
 	jwt.StandardClaims
 
 	Nonce string `json:"nonce,omitempty"`
+
+	// 他の情報を埋め込むことも可(メールアドレスとか)
 }
 
 func getClientConfig(clientID string) (*ClientConfig, error) {
@@ -122,8 +124,7 @@ func authorization(w http.ResponseWriter, r *http.Request) {
 	// ログインしていないようだったら、ログイン画面に遷移してログイン後に、以下のリダイレクト処理を行う。
 	// ココでは"Alice"としてログインしているモノとする。
 
-	// 後で使う情報を、codeをキーに一時的に保存
-	// 実際にはmemcached等を使う
+	// 後で使う情報を、codeをキーに一時的に保存(実際にはmemcached等を使う)
 	code := uuid.New().String()
 	nonce := query.Get("nonce")
 	tmpCache.Set(code, &TokenContent{User: "Alice", ClientID: clientID, Nonce: nonce}, cache.DefaultExpiration)
@@ -192,11 +193,20 @@ func token(w http.ResponseWriter, r *http.Request) {
 			IssuedAt:  time.Now().Unix(),
 			ExpiresAt: time.Now().Unix() + 3600,
 		},
+
+		// nonceはリプレイ攻撃の対策で必要。
+		// RPを自前実装する場合は、authorization_endpointに送ったnonceと
+		// id_token内のnonceが一致することを強く推奨
 		Nonce: content.Nonce,
+
+		// 他の情報を埋め込むことも可(メールアドレスとか)
 	})
 
 	tokenStr, err := token.SignedString([]byte(config.Secret))
 	b, err := json.Marshal(map[string]string{
+		// アクセストークンはuserinfo_endpointにユーザのclaimを追加で要求する場合に必要
+		//
+		// userinfo_endpointを提供しない(id_tokenだけで完結させる)場合には、なんでもOK(使用するトコがない)
 		"access_token": uuid.New().String(),
 		"token_type":   "Bearer",
 		"id_token":     tokenStr,
