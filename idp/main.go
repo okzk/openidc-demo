@@ -93,31 +93,46 @@ func metadata(w http.ResponseWriter, _ *http.Request) {
 	w.Write(b)
 }
 
+func errorRedirect(w http.ResponseWriter, r *http.Request, redirectURI, error string) {
+	v := url.Values{}
+	v.Add("error", error)
+	state := r.Form.Get("state")
+	if state != "" {
+		v.Add("state", state)
+	}
+
+	http.Redirect(w, r, redirectURI+"?"+v.Encode(), http.StatusFound)
+}
+
 func authorization(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-
-	// 固定値
-	if query.Get("response_type") != "code" {
-		http.Error(w, "invalid response_type", http.StatusBadRequest)
-		return
-	}
-
-	// 固定値
-	if query.Get("scope") != "openid" {
-		http.Error(w, "invalid scope", http.StatusBadRequest)
-		return
-	}
 
 	clientID := query.Get("client_id")
 	config, err := getClientConfig(clientID)
 	if err != nil {
 		// 登録されていたclientではなかった
+		log.Println("authorization failed: unknown client")
 		http.Error(w, "forbidden", http.StatusForbidden)
+	}
+
+	// 固定値
+	if query.Get("response_type") != "code" {
+		log.Println("authorization failed: invalid response_type")
+		errorRedirect(w, r, config.RedirectURI, "invalid_request_object")
+		return
+	}
+
+	// 固定値
+	if query.Get("scope") != "openid" {
+		log.Println("authorization failed: invalid scope")
+		errorRedirect(w, r, config.RedirectURI, "invalid_request_object")
+		return
 	}
 
 	// redirect_uriが登録されたものかチェック
 	if query.Get("redirect_uri") != config.RedirectURI {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		log.Println("authorization failed: invalid redirect URI")
+		errorRedirect(w, r, config.RedirectURI, "invalid_request_object")
 		return
 	}
 
@@ -145,33 +160,39 @@ func token(w http.ResponseWriter, r *http.Request) {
 	clientID, secret, ok := r.BasicAuth()
 	if !ok {
 		// Basic認証が不正
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 	}
 	config, err := getClientConfig(clientID)
 	if err != nil {
 		// 登録されていたclientではなかった
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 	}
 	if secret != config.Secret {
 		// シークレットが違う
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 	}
 	// redirect_uriが登録されたものかチェック
 	if r.Form.Get("redirect_uri") != config.RedirectURI {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 		return
 	}
 
 	// 固定値
 	if r.Form.Get("grant_type") != "authorization_code" {
-		http.Error(w, "invalid grant_type", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 		return
 	}
 
 	data, ok := tmpCache.Get(r.Form.Get("code"))
 	if !ok {
 		// authorizationで発行したコードじゃない
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 	}
 	// リプレイ攻撃を緩和するために使ったcodeは削除する
 	tmpCache.Delete(r.Form.Get("code"))
@@ -179,7 +200,8 @@ func token(w http.ResponseWriter, r *http.Request) {
 	content := data.(*TokenContent)
 	if content.ClientID != clientID {
 		// 違うClientID用に発行したcodeだった
-		http.Error(w, "forbidden", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 	}
 
 	token := jwt.NewWithClaims(jwt.GetSigningMethod("HS256"), Claim{
