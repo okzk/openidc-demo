@@ -172,6 +172,9 @@ func token(w http.ResponseWriter, r *http.Request) {
 		// authorizationで発行したコードじゃない
 		http.Error(w, "forbidden", http.StatusForbidden)
 	}
+	// リプレイ攻撃を緩和するために使ったcodeは削除する
+	tmpCache.Delete(r.Form.Get("code"))
+
 	content := data.(*TokenContent)
 	if content.ClientID != clientID {
 		// 違うClientID用に発行したcodeだった
